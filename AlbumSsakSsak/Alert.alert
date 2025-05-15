@@ -1,0 +1,20 @@
+@State private var showDeleteAlert = false
+@State private var photoToDelete: String?
+
+// 휴지통 섹션에서 버튼 액션
+Button(action: {
+    photoToDelete = photo.id
+    showDeleteAlert = true
+}) {
+    Image(systemName: "trash")
+}
+.alert("영구 삭제", isPresented: $showDeleteAlert) {
+    Button("취소", role: .cancel) {}
+    Button("삭제", role: .destructive) {
+        if let id = photoToDelete {
+            viewModel.permanentlyDeletePhoto(photoId: id)
+        }
+    }
+} message: {
+    Text("이 사진을 영구적으로 삭제하시겠습니까?")
+}
