@@ -16,6 +16,7 @@ struct MainView: View {
     @State private var showEndPicker = false
     @State private var photoToDelete: String?
     @State private var showDeleteAlert = false
+    @State private var selectedMonth: PhotoViewModel.PhotoGroup? // 월 선택 상태 추가
 
     var body: some View {
         NavigationView {
@@ -62,6 +63,7 @@ struct MainView: View {
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 isAlbumOpen = false
+                                selectedMonth = nil // 팝업 닫을 때 월 선택 초기화
                             }
                         }
                     
@@ -122,7 +124,7 @@ struct MainView: View {
             viewModeButtons
             if viewModel.viewMode == .folder && viewModel.selectedFolder != nil {
                 folderPhotosView
-            } else if viewModel.viewMode == .folder {
+            } else if viewModel.viewMode == .folder || selectedMonth != nil {
                 folderListView
             } else {
                 monthListView
@@ -135,7 +137,10 @@ struct MainView: View {
     // 뷰 모드 버튼
     private var viewModeButtons: some View {
         HStack {
-            Button(action: { viewModel.viewMode = .month }) {
+            Button(action: {
+                viewModel.viewMode = .month
+                selectedMonth = nil // 월별 뷰로 전환 시 선택된 월 초기화
+            }) {
                 Text("월 별")
                     .padding(.vertical, 8)
                     .padding(.horizontal, 16)
@@ -155,7 +160,7 @@ struct MainView: View {
         .padding(.vertical, 10)
     }
 
-    // 폴더별 사진 뷰 (무한 스크롤 추가)
+    // 폴더별 사진 뷰
     private var folderPhotosView: some View {
         VStack {
             HStack {
@@ -207,8 +212,19 @@ struct MainView: View {
                 ForEach(viewModel.albums) { album in
                     Button(action: {
                         viewModel.selectedFolder = album.id
+                        viewModel.selectedAlbum = album.id // 앨범 선택 시 selectedAlbum 설정
                         Task {
                             await viewModel.loadFolderPhotos(folderId: album.id, page: 1)
+                            await MainActor.run {
+                                // 선택한 앨범의 첫 번째 사진으로 currentIndex 설정
+                                if let firstPhoto = viewModel.filteredPhotos.first,
+                                   let index = viewModel.photos.firstIndex(where: { $0.id == firstPhoto.id }) {
+                                    currentIndex = index
+                                } else {
+                                    currentIndex = 0
+                                }
+                                isAlbumOpen = false // 앨범 선택 후 팝업 닫기
+                            }
                         }
                     }) {
                         VStack {
@@ -243,19 +259,9 @@ struct MainView: View {
             LazyVGrid(columns: [GridItem(.flexible())], spacing: 10) {
                 ForEach(viewModel.monthlyPhotos, id: \.id) { group in
                     Button(action: {
-                        viewModel.filteredPhotos = group.photos
-                        viewModel.selectedFolder = group.id
-                        viewModel.isFavoritesMain = false
-                        viewModel.isTrashMain = false
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            isAlbumOpen = false
-                        }
-                        if let firstPhoto = group.photos.first,
-                           let index = viewModel.photos.firstIndex(where: { $0.id == firstPhoto.id }) {
-                            currentIndex = index
-                        } else {
-                            currentIndex = 0
-                        }
+                        selectedMonth = group // 월 선택
+                        viewModel.filteredPhotos = group.photos // 선택한 월의 사진으로 필터링
+                        viewModel.viewMode = .folder // 폴더별 뷰로 전환
                     }) {
                         VStack {
                             Text("\(group.year)년 \(group.month)월")
@@ -358,7 +364,7 @@ struct MainView: View {
         }()
         
         return GeometryReader { geometry in
-            ZStack { // ZStack으로 감싸서 인덱스 텍스트를 고정
+            ZStack {
                 if displayPhotos.isEmpty {
                     Text("표시할 사진이 없습니다.")
                         .foregroundColor(.gray)
@@ -441,7 +447,6 @@ struct MainView: View {
                     .animation(.easeInOut, value: currentIndex)
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     
-                    // 인덱스 텍스트를 TabView 밖으로 이동하여 고정
                     Text("\(min(currentIndex, max(0, displayPhotos.count - 1)) + 1) / \(displayPhotos.count)")
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
@@ -466,14 +471,13 @@ struct MainView: View {
             .padding(.horizontal)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    let photos = viewModel.isTrashMain ? viewModel.photos.filter { !$0.isDeleted && !$0.isFavorite }.reversed() : viewModel.photos.filter { $0.isDeleted }.reversed()
+                    let photos = viewModel.isTrashMain ? viewModel.photos.filter { !$0.isDeleted && !$0.isFavorite }.reversed() : viewModel.trashPhotos.reversed()
                     ForEach(photos) { photo in
                         ZStack {
                             SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: 60, height: 60))
                                 .frame(width: 60, height: 60)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                                 .opacity(viewModel.isTrashMain ? 1 : 0.6)
-                            // 복구 및 삭제 버튼 제거
                         }
                     }
                 }

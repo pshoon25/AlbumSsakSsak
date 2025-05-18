@@ -29,9 +29,11 @@ class PhotoViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var currentIndex: Int = 0
 
-    private var currentPhotoPage: Int = 1 // 전체 사진 페이지
-    private var currentFolderPage: Int = 1 // 폴더 사진 페이지
-    private let pageSize: Int = 50 // 한 번에 로드할 사진 수
+    private var currentPhotoPage: Int = 1
+    private var currentFolderPage: Int = 1
+    private let pageSize: Int = 50
+    private let favoriteAlbumTitle = "Favorites"
+    private let trashAlbumTitle = "Trash"
 
     enum ViewMode {
         case month
@@ -67,7 +69,7 @@ class PhotoViewModel: ObservableObject {
                 print("Photo library access denied: \(authorizationStatus)")
                 return
             }
-            await groupPhotosByMonth()
+            await createSystemAlbumsIfNeeded()
             await loadAlbums()
             await loadPhotos()
             loadFavorites()
@@ -87,6 +89,41 @@ class PhotoViewModel: ObservableObject {
     private func updateCurrentIndex() {
         let displayPhotos = isFavoritesMain ? favoritePhotos : isTrashMain ? trashPhotos : photos.filter { !$0.isFavorite && !$0.isDeleted }
         currentIndex = displayPhotos.isEmpty ? 0 : min(currentIndex, displayPhotos.count - 1)
+    }
+    
+    // 즐겨찾기 및 휴지통 앨범 생성
+    private func createSystemAlbumsIfNeeded() async {
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = NSPredicate(format: "title = %@ OR title = %@", favoriteAlbumTitle, trashAlbumTitle)
+        let existingAlbums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        
+        var favoriteAlbumExists = false
+        var trashAlbumExists = false
+        
+        existingAlbums.enumerateObjects { (collection, _, _) in
+            if collection.localizedTitle == self.favoriteAlbumTitle {
+                favoriteAlbumExists = true
+            } else if collection.localizedTitle == self.trashAlbumTitle {
+                trashAlbumExists = true
+            }
+        }
+        
+        do {
+            if !favoriteAlbumExists {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: self.favoriteAlbumTitle)
+                }
+                print("Created Favorites album")
+            }
+            if !trashAlbumExists {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: self.trashAlbumTitle)
+                }
+                print("Created Trash album")
+            }
+        } catch {
+            print("Error creating system albums: \(error)")
+        }
     }
     
     // 앨범 로드
@@ -142,7 +179,7 @@ class PhotoViewModel: ObservableObject {
         trashPhotos = photos.filter { $0.isDeleted }
     }
     
-    // 사진 로드 (페이지네이션 적용)
+    // 사진 로드
     func loadPhotos(append: Bool = true) async {
         await checkPhotoLibraryPermission()
         guard authorizationStatus == .authorized || authorizationStatus == .limited else {
@@ -154,7 +191,6 @@ class PhotoViewModel: ObservableObject {
         
         let fetchOptions = PHFetchOptions()
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        fetchOptions.fetchLimit = pageSize // 페이지당 50장
         let assets = PHAsset.fetchAssets(with: fetchOptions)
         
         var loadedPhotos: [Photo] = []
@@ -178,14 +214,14 @@ class PhotoViewModel: ObservableObject {
                 self.photos = loadedPhotos
             }
             self.updateFilteredPhotos()
-            self.hasMore = loadedPhotos.count == pageSize
+            self.hasMore = loadedPhotos.count >= pageSize
             isLoading = false
             self.objectWillChange.send()
         }
         await groupPhotosByMonth()
     }
 
-    // 월별 그룹화 (수정)
+    // 월별 그룹화
     func groupPhotosByMonth() async {
         let photoMap = await Task {
             var map: [String: [Photo]] = [:]
@@ -207,12 +243,12 @@ class PhotoViewModel: ObservableObject {
             self.objectWillChange.send()
         }
     }
-    
-    // 무한 스크롤: 메인 이미지 섹션에서 오른쪽 스와이프 시 사진 로드
+
+    // 무한 스크롤
     func loadMorePhotosIfNeeded(currentPhoto: Photo?) async {
         guard let currentPhoto = currentPhoto,
               let currentIndex = photos.firstIndex(where: { $0.id == currentPhoto.id }),
-              currentIndex >= photos.count - 10, // 마지막 10장 근처에서 로드
+              currentIndex >= photos.count - 10,
               hasMore,
               !isLoading else { return }
         
@@ -258,12 +294,17 @@ class PhotoViewModel: ObservableObject {
 
     // 즐겨찾기 토글
     func toggleFavorite(photoId: String) async {
+        guard let photo = photos.first(where: { $0.id == photoId }),
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else { return }
+        
         if let index = photos.firstIndex(where: { $0.id == photoId }) {
             photos[index].isFavorite.toggle()
             if photos[index].isFavorite {
                 favorites.append(photoId)
+                await addAssetToAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
             } else {
                 favorites.removeAll { $0 == photoId }
+                await removeAssetFromAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
             }
             saveFavorites()
             await MainActor.run {
@@ -275,9 +316,13 @@ class PhotoViewModel: ObservableObject {
 
     // 사진 삭제
     func deletePhoto(photoId: String) async {
+        guard let photo = photos.first(where: { $0.id == photoId }),
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else { return }
+        
         if let index = photos.firstIndex(where: { $0.id == photoId }) {
             photos[index].isDeleted = true
             trash.append(photoId)
+            await addAssetToAlbum(asset: asset, albumTitle: trashAlbumTitle)
             saveTrash()
             await MainActor.run {
                 self.updateFilteredPhotos()
@@ -288,9 +333,13 @@ class PhotoViewModel: ObservableObject {
     
     // 사진 복원
     func restorePhoto(photoId: String) async {
+        guard let photo = photos.first(where: { $0.id == photoId }),
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else { return }
+        
         if let index = photos.firstIndex(where: { $0.id == photoId }) {
             photos[index].isDeleted = false
             trash.removeAll { $0 == photoId }
+            await removeAssetFromAlbum(asset: asset, albumTitle: trashAlbumTitle)
             saveTrash()
             await MainActor.run {
                 self.updateFilteredPhotos()
@@ -301,14 +350,23 @@ class PhotoViewModel: ObservableObject {
 
     // 영구 삭제
     func permanentlyDeletePhoto(photoId: String) async {
-        photos.removeAll { $0.id == photoId }
-        trash.removeAll { $0 == photoId }
-        favorites.removeAll { $0 == photoId }
-        saveTrash()
-        saveFavorites()
-        await MainActor.run {
-            self.updateFilteredPhotos()
-            self.objectWillChange.send()
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else { return }
+        
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.deleteAssets([asset] as NSArray)
+            }
+            photos.removeAll { $0.id == photoId }
+            trash.removeAll { $0 == photoId }
+            favorites.removeAll { $0 == photoId }
+            saveTrash()
+            saveFavorites()
+            await MainActor.run {
+                self.updateFilteredPhotos()
+                self.objectWillChange.send()
+            }
+        } catch {
+            print("Error permanently deleting photo: \(error)")
         }
     }
 
@@ -336,7 +394,7 @@ class PhotoViewModel: ObservableObject {
         await groupPhotosByMonth()
     }
 
-    // 폴더 사진 로드 (페이지네이션 적용)
+    // 폴더 사진 로드
     func loadFolderPhotos(folderId: String, page: Int = 1, append: Bool = false) async {
         guard let collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [folderId], options: nil).firstObject else {
             print("Folder not found: \(folderId)")
@@ -344,7 +402,6 @@ class PhotoViewModel: ObservableObject {
         }
         await MainActor.run { isLoading = true }
         
-        // 폴더가 바뀌었거나 새로 로드하는 경우 페이지와 필터 초기화
         if !append || selectedFolder != folderId {
             currentFolderPage = 1
             filteredPhotos.removeAll()
@@ -352,10 +409,10 @@ class PhotoViewModel: ObservableObject {
         }
         
         let fetchOptions = PHFetchOptions()
-        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)] // 오류 수정: 여분의 괄호 제거
         fetchOptions.fetchLimit = pageSize * page
-        if let start = startDate, let end = endDate {
-            fetchOptions.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@", start as NSDate, end as NSDate)
+        if let startDate = startDate, let endDate = endDate { // 오류 수정: 변수명 일관성 유지
+            fetchOptions.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@", startDate as NSDate, endDate as NSDate) // 오류 수정: Date?를 NSDate로 변환
         }
         let assets = PHAsset.fetchAssets(in: collection, options: fetchOptions)
         var newPhotos: [Photo] = []
@@ -389,11 +446,57 @@ class PhotoViewModel: ObservableObject {
     func loadMoreFolderPhotosIfNeeded(folderId: String, currentPhoto: Photo?) async {
         guard let currentPhoto = currentPhoto,
               let currentIndex = filteredPhotos.firstIndex(where: { $0.id == currentPhoto.id }),
-              currentIndex >= filteredPhotos.count - 10, // 마지막 10장 근처에서 로드
+              currentIndex >= filteredPhotos.count - 10,
               hasMore,
               !isLoading else { return }
         
         currentFolderPage += 1
         await loadFolderPhotos(folderId: folderId, page: currentFolderPage, append: true)
+    }
+
+    // 앨범에 사진 추가
+    private func addAssetToAlbum(asset: PHAsset, albumTitle: String) async {
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = NSPredicate(format: "title = %@", albumTitle)
+        let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        
+        guard let collection = collections.firstObject else {
+            print("Album \(albumTitle) not found")
+            return
+        }
+        
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                if let changeRequest = PHAssetCollectionChangeRequest(for: collection) {
+                    changeRequest.addAssets([asset] as NSArray)
+                }
+            }
+            print("Added asset to \(albumTitle)")
+        } catch {
+            print("Error adding asset to \(albumTitle): \(error)")
+        }
+    }
+
+    // 앨범에서 사진 제거
+    private func removeAssetFromAlbum(asset: PHAsset, albumTitle: String) async {
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = NSPredicate(format: "title = %@", albumTitle)
+        let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        
+        guard let collection = collections.firstObject else {
+            print("Album \(albumTitle) not found")
+            return
+        }
+        
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                if let changeRequest = PHAssetCollectionChangeRequest(for: collection) {
+                    changeRequest.removeAssets([asset] as NSArray)
+                }
+            }
+            print("Removed asset from \(albumTitle)")
+        } catch {
+            print("Error removing asset from \(albumTitle): \(error)")
+        }
     }
 }
