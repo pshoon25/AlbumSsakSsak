@@ -40,11 +40,14 @@ struct MainView: View {
                     } else if viewModel.isLoading {
                         VStack {
                             SVGWebView()
+                                .frame(width: 300, height: 300) // SVG 크기 명시
                             Text("로딩 중...")
                                 .font(.headline)
                                 .foregroundColor(.gray)
                                 .padding(.top, 8)
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.white) // 흰 배경
                     } else if viewModel.monthlyPhotos.isEmpty && viewModel.albums.isEmpty {
                         Text("사진이 없습니다.")
                             .font(.headline)

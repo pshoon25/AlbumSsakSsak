@@ -4,20 +4,16 @@ import Photos
 struct SsakSsakAsyncImage: View {
     let asset: PHAsset
     let size: CGSize
-    @State private var thumbnail: UIImage?
-    @State private var fullImage: UIImage?
+    @State private var image: UIImage?
+    
+    private static let cachingManager = PHCachingImageManager()
     
     var body: some View {
         Group {
-            if let fullImage = fullImage {
-                Image(uiImage: fullImage)
+            if let image = image {
+                Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-            } else if let thumbnail = thumbnail {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: 2) // 썸네일 표시 시 약간의 블러 효과
             } else {
                 ProgressView()
                     .frame(width: size.width, height: size.height)
@@ -30,65 +26,53 @@ struct SsakSsakAsyncImage: View {
         .frame(width: size.width, height: size.height)
         .clipped()
         .onAppear {
-            loadThumbnail()
-            loadFullImage()
+            loadImage()
+            cacheImage()
+        }
+        .onDisappear {
+            Self.cachingManager.stopCachingImages(for: [asset], targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: nil)
         }
     }
     
-    private func loadThumbnail() {
-        let options = PHImageRequestOptions()
-        options.isSynchronous = false
-        options.deliveryMode = .fastFormat
-        options.isNetworkAccessAllowed = false // 로컬 이미지만 먼저 시도
-        
-        PHImageManager.default().requestImage(for: asset,
-                                             targetSize: CGSize(width: size.width / 2, height: size.height / 2),
-                                             contentMode: .aspectFill,
-                                             options: options) { (result, info) in
-            if let result = result {
-                DispatchQueue.main.async {
-                    self.thumbnail = result
-                }
-            } else if let error = info?[PHImageErrorKey] as? Error {
-                print("Thumbnail load error for asset \(asset.localIdentifier): \(error)")
-                // iCloud에서 재시도
-                let networkOptions = PHImageRequestOptions()
-                networkOptions.isSynchronous = false
-                networkOptions.deliveryMode = .fastFormat
-                networkOptions.isNetworkAccessAllowed = true
-                PHImageManager.default().requestImage(for: asset,
-                                                     targetSize: CGSize(width: size.width / 2, height: size.height / 2),
-                                                     contentMode: .aspectFill,
-                                                     options: networkOptions) { (result, info) in
-                    if let result = result {
-                        DispatchQueue.main.async {
-                            self.thumbnail = result
-                        }
-                    } else if let error = info?[PHImageErrorKey] as? Error {
-                        print("Thumbnail network load error for asset \(asset.localIdentifier): \(error)")
-                    }
-                }
-            }
-        }
-    }
-    
-    private func loadFullImage() {
+    private func loadImage() {
+        let scale = UIScreen.main.scale // @2x, @3x 고려
+        let targetSize = CGSize(width: size.width * scale, height: size.height * scale)
         let options = PHImageRequestOptions()
         options.isSynchronous = false
         options.deliveryMode = .highQualityFormat
+        options.resizeMode = .exact
         options.isNetworkAccessAllowed = true
         
-        PHImageManager.default().requestImage(for: asset,
-                                             targetSize: size,
-                                             contentMode: .aspectFill,
-                                             options: options) { (result, info) in
-            if let result = result {
+        PHImageManager.default().requestImage(
+            for: asset,
+            targetSize: targetSize,
+            contentMode: .aspectFill,
+            options: options
+        ) { result, info in
+            if let result = result, info?[PHImageResultIsDegradedKey] as? Bool == false {
                 DispatchQueue.main.async {
-                    self.fullImage = result
+                    self.image = result
+                    print("Loaded high-quality image for asset \(asset.localIdentifier), size: \(result.size)")
                 }
             } else if let error = info?[PHImageErrorKey] as? Error {
-                print("Full image load error for asset \(asset.localIdentifier): \(error)")
+                print("Image load error for asset \(asset.localIdentifier): \(error)")
             }
         }
+    }
+    
+    private func cacheImage() {
+        let scale = UIScreen.main.scale
+        let targetSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .exact
+        options.isNetworkAccessAllowed = true
+        
+        Self.cachingManager.startCachingImages(
+            for: [asset],
+            targetSize: targetSize,
+            contentMode: .aspectFill,
+            options: options
+        )
     }
 }
