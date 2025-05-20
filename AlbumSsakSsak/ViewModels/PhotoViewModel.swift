@@ -593,12 +593,38 @@ class PhotoViewModel: ObservableObject {
     }
     
     func saveChanges() async {
-        // 즐겨찾기 사진 처리 (이미 Favorites 앨범에 추가됨, 확인 및 유지)
+        await MainActor.run { isLoading = true }
+        
+        // 즐겨찾기 사진을 iOS 사진 앱의 즐겨찾기에 반영
         for photoId in favorites {
-            guard let photo = photos.first(where: { $0.id == photoId }),
-                  let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else { continue }
-            // 이미 toggleFavorite에서 Favorites 앨범에 추가됨, 중복 추가 방지
-            print("Confirmed favorite photo \(photoId) in Favorites album")
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else {
+                print("Asset not found for photoId: \(photoId)")
+                continue
+            }
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    let request = PHAssetChangeRequest(for: asset)
+                    request.isFavorite = true
+                }
+                print("Set photo \(photoId) as iOS Favorite")
+            } catch {
+                print("Error setting photo \(photoId) as iOS Favorite: \(error)")
+            }
+        }
+        
+        // 즐겨찾기 사진이 아닌 사진의 iOS 즐겨찾기 해제
+        let nonFavoritePhotos = photos.filter { !favorites.contains($0.id) }
+        for photo in nonFavoritePhotos {
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photo.id], options: nil).firstObject else { continue }
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    let request = PHAssetChangeRequest(for: asset)
+                    request.isFavorite = false
+                }
+                print("Removed photo \(photo.id) from iOS Favorites")
+            } catch {
+                print("Error removing photo \(photo.id) from iOS Favorites: \(error)")
+            }
         }
         
         // 휴지통 사진을 iOS '최근 삭제된 항목'으로 이동
@@ -630,6 +656,7 @@ class PhotoViewModel: ObservableObject {
             self.saveFavorites()
             self.saveTrash()
             self.updateFilteredPhotos()
+            self.isLoading = false
             self.objectWillChange.send()
         }
         

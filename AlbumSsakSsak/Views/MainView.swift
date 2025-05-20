@@ -146,8 +146,10 @@ struct MainView: View {
             viewModeButtons
             if viewModel.viewMode == .folder && viewModel.selectedFolder != nil {
                 folderPhotosView
-            } else if viewModel.viewMode == .folder || selectedMonth != nil {
+            } else if viewModel.viewMode == .folder {
                 folderListView
+            } else if selectedMonth != nil {
+                monthPhotosView
             } else {
                 monthListView
             }
@@ -160,17 +162,26 @@ struct MainView: View {
     private var viewModeButtons: some View {
         HStack {
             Button(action: {
-                viewModel.viewMode = .month
-                selectedMonth = nil // 월별 뷰로 전환 시 선택된 월 초기화
+                withAnimation {
+                    viewModel.viewMode = .month
+                    selectedMonth = nil
+                    viewModel.filteredPhotos = [] // 필터 초기화
+                }
             }) {
                 Text("월 별")
                     .padding(.vertical, 8)
                     .padding(.horizontal, 16)
-                    .background(viewModel.viewMode == .month ? Color.blue : Color.gray.opacity(0.2))
-                    .foregroundColor(viewModel.viewMode == .month ? .white : .black)
+                    .background(viewModel.viewMode == .month && selectedMonth == nil ? Color.blue : Color.gray.opacity(0.2))
+                    .foregroundColor(viewModel.viewMode == .month && selectedMonth == nil ? .white : .black)
                     .clipShape(Capsule())
             }
-            Button(action: { viewModel.viewMode = .folder }) {
+            Button(action: {
+                withAnimation {
+                    viewModel.viewMode = .folder
+                    selectedMonth = nil
+                    viewModel.filteredPhotos = [] // 필터 초기화
+                }
+            }) {
                 Text("폴더별")
                     .padding(.vertical, 8)
                     .padding(.horizontal, 16)
@@ -180,6 +191,49 @@ struct MainView: View {
             }
         }
         .padding(.vertical, 10)
+    }
+
+    // 월별 사진 뷰 (새로 추가)
+    private var monthPhotosView: some View {
+        VStack {
+            HStack {
+                Button(action: {
+                    withAnimation {
+                        selectedMonth = nil
+                        viewModel.filteredPhotos = [] // 필터 초기화
+                    }
+                }) {
+                    HStack {
+                        Image("arrowBackIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 30, height: 30)
+                            .foregroundColor(.black)
+                    }
+                }
+                Spacer()
+                dateFilterView
+            }
+            .padding(.horizontal)
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 5) {
+                    ForEach(viewModel.filteredPhotos) { photo in
+                        Button(action: {
+                            viewModel.selectedAlbum = photo.id
+                            currentIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+                            withAnimation {
+                                isAlbumOpen = false
+                            }
+                        }) {
+                            SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: 80, height: 80))
+                                .frame(width: 80, height: 80)
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
     }
 
     // 폴더별 사진 뷰
@@ -281,9 +335,10 @@ struct MainView: View {
             LazyVGrid(columns: [GridItem(.flexible())], spacing: 10) {
                 ForEach(viewModel.monthlyPhotos, id: \.id) { group in
                     Button(action: {
-                        selectedMonth = group // 월 선택
-                        viewModel.filteredPhotos = group.photos // 선택한 월의 사진으로 필터링
-                        viewModel.viewMode = .folder // 폴더별 뷰로 전환
+                        withAnimation {
+                            selectedMonth = group
+                            viewModel.filteredPhotos = group.photos.filter { !$0.isFavorite && !$0.isDeleted } // 즐겨찾기/휴지통 제외
+                        }
                     }) {
                         VStack {
                             Text("\(group.year)년 \(group.month)월")
@@ -378,10 +433,11 @@ struct MainView: View {
                 return viewModel.favoritePhotos
             } else if viewModel.isTrashMain {
                 return viewModel.trashPhotos
-            } else if viewModel.filteredPhotos.isEmpty {
-                return viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }
             } else {
-                return viewModel.filteredPhotos
+                // filteredPhotos가 비어 있으면 즐겨찾기/휴지통 제외한 사진 표시
+                return viewModel.filteredPhotos.isEmpty
+                    ? viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }
+                    : viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
             }
         }()
         
@@ -397,7 +453,6 @@ struct MainView: View {
                         set: { newValue in
                             currentIndex = max(0, min(newValue, displayPhotos.count - 1))
                             Task {
-                                // 요구사항 1: 마지막 사진 근처에서 추가 로드 트리거
                                 await viewModel.loadMorePhotosIfNeeded(currentIndex: currentIndex, totalCount: displayPhotos.count)
                             }
                         }
