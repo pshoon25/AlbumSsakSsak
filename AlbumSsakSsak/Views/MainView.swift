@@ -396,7 +396,7 @@ struct MainView: View {
     private var favoriteSection: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text(viewModel.isFavoritesMain ? viewModel.albums.first(where: { $0.id == viewModel.selectedFolder })?.name ?? "Photos" : "즐겨찾기")
+                Text("즐겨찾기")
                     .font(.headline)
                     .foregroundColor(.black)
             }
@@ -405,7 +405,12 @@ struct MainView: View {
                 HStack(spacing: 8) {
                     ForEach(viewModel.favoritePhotos.reversed()) { photo in
                         Button(action: {
-                            currentIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+                            Task {
+                                await viewModel.toggleFavorite(photoId: photo.id)
+                                await MainActor.run {
+                                    currentIndex = min(currentIndex, max(0, viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }.count - 1))
+                                }
+                            }
                         }) {
                             SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: 60, height: 60))
                                 .frame(width: 60, height: 60)
@@ -418,12 +423,6 @@ struct MainView: View {
         }
         .padding(.vertical, 5)
         .background(Color.white)
-        .onTapGesture {
-            print("Favorites tapped, current isFavoritesMain: \(viewModel.isFavoritesMain)")
-            viewModel.isFavoritesMain.toggle()
-            viewModel.isTrashMain = false
-            currentIndex = viewModel.favoritePhotos.isEmpty ? 0 : min(currentIndex, viewModel.favoritePhotos.count - 1)
-        }
     }
 
     // 메인 이미지 섹션
@@ -542,20 +541,26 @@ struct MainView: View {
     private var trashSection: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text(viewModel.isTrashMain ? viewModel.albums.first(where: { $0.id == viewModel.selectedFolder })?.name ?? "Photos" : "휴지통")
+                Text("휴지통")
                     .font(.headline)
                     .foregroundColor(.black)
             }
             .padding(.horizontal)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    let photos = viewModel.isTrashMain ? viewModel.photos.filter { !$0.isDeleted && !$0.isFavorite }.reversed() : viewModel.trashPhotos.reversed()
-                    ForEach(photos) { photo in
-                        ZStack {
+                    ForEach(viewModel.trashPhotos.reversed()) { photo in
+                        Button(action: {
+                            Task {
+                                await viewModel.restorePhoto(photoId: photo.id)
+                                await MainActor.run {
+                                    currentIndex = min(currentIndex, max(0, viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }.count - 1))
+                                }
+                            }
+                        }) {
                             SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: 60, height: 60))
                                 .frame(width: 60, height: 60)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .opacity(viewModel.isTrashMain ? 1 : 0.6)
+                                .opacity(0.6)
                         }
                     }
                 }
@@ -564,24 +569,6 @@ struct MainView: View {
         }
         .padding(.vertical, 5)
         .background(Color.white)
-        .onTapGesture {
-            viewModel.isTrashMain.toggle()
-            viewModel.isFavoritesMain = false
-            currentIndex = 0
-        }
-        .alert("영구 삭제", isPresented: $showDeleteAlert) {
-            Button("취소", role: .cancel) {}
-            Button("삭제", role: .destructive) {
-                if let id = photoToDelete {
-                    Task {
-                        await viewModel.permanentlyDeletePhoto(photoId: id)
-                    }
-                }
-                photoToDelete = nil
-            }
-        } message: {
-            Text("이 사진을 영구적으로 삭제하시겠습니까?")
-        }
     }
 
     // 광고 섹션
