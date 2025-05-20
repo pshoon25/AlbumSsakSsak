@@ -38,8 +38,13 @@ struct MainView: View {
                         .foregroundColor(.white)
                         .clipShape(Capsule())
                     } else if viewModel.isLoading {
-                        ProgressView("로딩 중...")
-                            .progressViewStyle(CircularProgressViewStyle())
+                        VStack {
+                            SVGWebView()
+                            Text("로딩 중...")
+                                .font(.headline)
+                                .foregroundColor(.gray)
+                                .padding(.top, 8)
+                        }
                     } else if viewModel.monthlyPhotos.isEmpty && viewModel.albums.isEmpty {
                         Text("사진이 없습니다.")
                             .font(.headline)
@@ -56,14 +61,13 @@ struct MainView: View {
                     }
                 }
                 
-                // 팝업 스타일 albumSection
                 if isAlbumOpen {
                     Color.black.opacity(0.4)
                         .ignoresSafeArea()
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 isAlbumOpen = false
-                                selectedMonth = nil // 팝업 닫을 때 월 선택 초기화
+                                selectedMonth = nil
                             }
                         }
                     
@@ -90,17 +94,35 @@ struct MainView: View {
                 .scaledToFit()
                 .frame(width: 30, height: 30)
             Spacer()
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    isAlbumOpen.toggle()
+            if !viewModel.favorites.isEmpty || !viewModel.trash.isEmpty {
+                Button(action: {
+                    Task {
+                        await viewModel.saveChanges() // 요구사항 3: 저장 버튼 클릭 시 saveChanges 호출
+                        await MainActor.run {
+                            isAlbumOpen = false
+                        }
+                    }
+                }) {
+                    Text("저장")
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
                 }
-            }) {
-                Image("AlbumSelectIcon")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 30, height: 30)
-                    .foregroundColor(.black)
-                    .scaleEffect(isAlbumOpen ? 1.2 : 1.0)
+            } else {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isAlbumOpen.toggle()
+                    }
+                }) {
+                    Image("AlbumSelectIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 30, height: 30)
+                        .foregroundColor(.black)
+                        .scaleEffect(isAlbumOpen ? 1.2 : 1.0)
+                }
             }
         }
         .padding(.horizontal)
@@ -375,7 +397,8 @@ struct MainView: View {
                         set: { newValue in
                             currentIndex = max(0, min(newValue, displayPhotos.count - 1))
                             Task {
-                                await viewModel.loadMorePhotosIfNeeded(currentPhoto: displayPhotos[safe: currentIndex])
+                                // 요구사항 1: 마지막 사진 근처에서 추가 로드 트리거
+                                await viewModel.loadMorePhotosIfNeeded(currentIndex: currentIndex, totalCount: displayPhotos.count)
                             }
                         }
                     )) {

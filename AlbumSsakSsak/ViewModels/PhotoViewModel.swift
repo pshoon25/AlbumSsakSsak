@@ -34,6 +34,7 @@ class PhotoViewModel: ObservableObject {
     private let pageSize: Int = 50
     private let favoriteAlbumTitle = "Favorites"
     private let trashAlbumTitle = "Trash"
+    private var yearMonthKeys: [String] = [] // 년/월 키 캐싱
 
     enum ViewMode {
         case month
@@ -69,12 +70,15 @@ class PhotoViewModel: ObservableObject {
                 print("Photo library access denied: \(authorizationStatus)")
                 return
             }
-            await createSystemAlbumsIfNeeded()
-            await loadAlbums()
-            await loadPhotos()
             loadFavorites()
             loadTrash()
-            print("Initialization complete: Photos: \(photos.count), Albums: \(albums.count), Monthly groups: \(monthlyPhotos.count)")
+            await createSystemAlbumsIfNeeded()
+            await loadAlbums()
+            await loadPhotos(append: false)
+            await MainActor.run {
+                self.updateFilteredPhotos()
+                print("Initialization complete: Photos: \(photos.count), Albums: \(albums.count), Monthly groups: \(monthlyPhotos.count)")
+            }
         }
     }
 
@@ -189,23 +193,106 @@ class PhotoViewModel: ObservableObject {
         
         await MainActor.run { isLoading = true }
         
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let assets = PHAsset.fetchAssets(with: fetchOptions)
-        
+        // 중복 방지 및 데이터 초기화
+        var photoIdSet: Set<String> = append ? Set(photos.map { $0.id }) : []
         var loadedPhotos: [Photo] = []
-        assets.enumerateObjects { (asset, _, _) in
-            loadedPhotos.append(Photo(
-                id: asset.localIdentifier,
-                asset: asset,
-                isFavorite: self.favorites.contains(asset.localIdentifier),
-                isDeleted: self.trash.contains(asset.localIdentifier),
-                albumName: "All Photos",
-                timestamp: asset.creationDate ?? Date()
-            ))
+        var tempYearMonthKeys: Set<String> = Set(yearMonthKeys)
+        var allPhotos: [Photo] = [] // 전체 사진 메타데이터용
+        
+        // 즐겨찾기와 휴지통 사진 로드
+        let allPhotoIds = Array(Set(favorites + trash))
+        if !allPhotoIds.isEmpty {
+            let fetchOptions = PHFetchOptions()
+            fetchOptions.predicate = NSPredicate(format: "localIdentifier IN %@", allPhotoIds)
+            let assets = PHAsset.fetchAssets(with: fetchOptions)
+            assets.enumerateObjects { (asset, _, _) in
+                let photoId = asset.localIdentifier
+                if !photoIdSet.contains(photoId) {
+                    let photo = Photo(
+                        id: photoId,
+                        asset: asset,
+                        isFavorite: self.favorites.contains(photoId),
+                        isDeleted: self.trash.contains(photoId),
+                        albumName: "All Photos",
+                        timestamp: asset.creationDate ?? Date()
+                    )
+                    loadedPhotos.append(photo)
+                    allPhotos.append(photo)
+                    photoIdSet.insert(photoId)
+                    
+                    let date = photo.timestamp
+                    let year = Calendar.current.component(.year, from: date)
+                    let month = Calendar.current.component(.month, from: date)
+                    let key = "\(year)-\(month)"
+                    tempYearMonthKeys.insert(key)
+                }
+            }
+            print("Loaded favorites/trash photos: \(loadedPhotos.count)")
         }
         
-        print("Fetched assets count: \(assets.count), Loaded photos: \(loadedPhotos.count)")
+        // 일반 사진 로드 (페이지네이션)
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        fetchOptions.fetchLimit = pageSize
+        if !photoIdSet.isEmpty {
+            fetchOptions.predicate = NSPredicate(format: "NOT (localIdentifier IN %@)", Array(photoIdSet))
+        }
+        let assets = PHAsset.fetchAssets(with: fetchOptions)
+        
+        assets.enumerateObjects { (asset, _, _) in
+            let photoId = asset.localIdentifier
+            if !photoIdSet.contains(photoId) {
+                let photo = Photo(
+                    id: photoId,
+                    asset: asset,
+                    isFavorite: self.favorites.contains(photoId),
+                    isDeleted: self.trash.contains(photoId),
+                    albumName: "All Photos",
+                    timestamp: asset.creationDate ?? Date()
+                )
+                loadedPhotos.append(photo)
+                allPhotos.append(photo)
+                photoIdSet.insert(photoId)
+                
+                let date = photo.timestamp
+                let year = Calendar.current.component(.year, from: date)
+                let month = Calendar.current.component(.month, from: date)
+                let key = "\(year)-\(month)"
+                tempYearMonthKeys.insert(key)
+            }
+        }
+        
+        // 전체 사진 메타데이터 로드 (년/월 키 생성용)
+        let collectionFetchOptions = PHFetchOptions()
+        let collections = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumUserLibrary, options: collectionFetchOptions)
+        collections.enumerateObjects { (collection, _, _) in
+            let assetFetchOptions = PHFetchOptions()
+            assetFetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            let allAssets = PHAsset.fetchAssets(in: collection, options: assetFetchOptions)
+            allAssets.enumerateObjects { (asset, _, _) in
+                let photoId = asset.localIdentifier
+                if !photoIdSet.contains(photoId) {
+                    let photo = Photo(
+                        id: photoId,
+                        asset: asset,
+                        isFavorite: self.favorites.contains(photoId),
+                        isDeleted: self.trash.contains(photoId),
+                        albumName: "All Photos",
+                        timestamp: asset.creationDate ?? Date()
+                    )
+                    allPhotos.append(photo)
+                    photoIdSet.insert(photoId)
+                    
+                    let date = photo.timestamp
+                    let year = Calendar.current.component(.year, from: date)
+                    let month = Calendar.current.component(.month, from: date)
+                    let key = "\(year)-\(month)"
+                    tempYearMonthKeys.insert(key)
+                }
+            }
+        }
+        
+        print("Fetched assets count: \(assets.count), Total loaded photos: \(loadedPhotos.count), All photos: \(allPhotos.count)")
         
         await MainActor.run {
             if append {
@@ -213,24 +300,31 @@ class PhotoViewModel: ObservableObject {
             } else {
                 self.photos = loadedPhotos
             }
+            self.yearMonthKeys = Array(tempYearMonthKeys).sorted { $0 > $1 } // 최신순 정렬
             self.updateFilteredPhotos()
-            self.hasMore = loadedPhotos.count >= pageSize
+            self.hasMore = assets.count >= pageSize
             isLoading = false
             self.objectWillChange.send()
         }
-        await groupPhotosByMonth()
+        await groupPhotosByMonth(photos: allPhotos)
     }
 
     // 월별 그룹화
-    func groupPhotosByMonth() async {
+    func groupPhotosByMonth(photos: [Photo] = []) async {
         let photoMap = await Task {
             var map: [String: [Photo]] = [:]
-            for photo in self.photos {
+            for photo in photos.isEmpty ? self.photos : photos {
                 let date = photo.timestamp
                 let year = Calendar.current.component(.year, from: date)
                 let month = Calendar.current.component(.month, from: date)
                 let key = "\(year)-\(month)"
                 map[key, default: []].append(photo)
+            }
+            // 캐싱된 년/월 키 추가
+            for key in self.yearMonthKeys {
+                if map[key] == nil {
+                    map[key] = []
+                }
             }
             print("Photo map keys: \(map.keys)")
             return map
@@ -245,10 +339,8 @@ class PhotoViewModel: ObservableObject {
     }
 
     // 무한 스크롤
-    func loadMorePhotosIfNeeded(currentPhoto: Photo?) async {
-        guard let currentPhoto = currentPhoto,
-              let currentIndex = photos.firstIndex(where: { $0.id == currentPhoto.id }),
-              currentIndex >= photos.count - 10,
+    func loadMorePhotosIfNeeded(currentIndex: Int, totalCount: Int) async {
+        guard currentIndex >= totalCount - 5, // 마지막 5장 근처에서 로드
               hasMore,
               !isLoading else { return }
         
@@ -498,5 +590,51 @@ class PhotoViewModel: ObservableObject {
         } catch {
             print("Error removing asset from \(albumTitle): \(error)")
         }
+    }
+    
+    func saveChanges() async {
+        // 즐겨찾기 사진 처리 (이미 Favorites 앨범에 추가됨, 확인 및 유지)
+        for photoId in favorites {
+            guard let photo = photos.first(where: { $0.id == photoId }),
+                  let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else { continue }
+            // 이미 toggleFavorite에서 Favorites 앨범에 추가됨, 중복 추가 방지
+            print("Confirmed favorite photo \(photoId) in Favorites album")
+        }
+        
+        // 휴지통 사진을 iOS '최근 삭제된 항목'으로 이동
+        var assetsToDelete: [PHAsset] = []
+        for photoId in trash {
+            if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject {
+                assetsToDelete.append(asset)
+            }
+        }
+        
+        if !assetsToDelete.isEmpty {
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.deleteAssets(assetsToDelete as NSArray)
+                }
+                print("Moved \(assetsToDelete.count) photos to iOS Recently Deleted")
+            } catch {
+                print("Error moving photos to Recently Deleted: \(error)")
+            }
+        }
+        
+        // 상태 초기화
+        await MainActor.run {
+            self.photos.removeAll { photo in
+                favorites.contains(photo.id) || trash.contains(photo.id)
+            }
+            self.favorites.removeAll()
+            self.trash.removeAll()
+            self.saveFavorites()
+            self.saveTrash()
+            self.updateFilteredPhotos()
+            self.objectWillChange.send()
+        }
+        
+        // 사진 목록 갱신
+        currentPhotoPage = 1
+        await loadPhotos(append: false)
     }
 }
