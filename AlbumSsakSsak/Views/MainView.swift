@@ -109,7 +109,7 @@ struct MainView: View {
                     Text("저장")
                         .padding(.vertical, 8)
                         .padding(.horizontal, 16)
-                        .background(Color.blue)
+                        .background(Color.black)
                         .foregroundColor(.white)
                         .clipShape(Capsule())
                 }
@@ -582,10 +582,10 @@ struct MainView: View {
     }
 
     private var adUnitID: String {
-        #if DEBUG
+//        #if DEBUG
         return "ca-app-pub-3940256099942544/2934735716"
-        #else
-        return "ca-app-pub-5718563229695590/1031774395"
-        #endif
+//        #else
+//        return "ca-app-pub-5718563229695590/1031774395"
+//        #endif
     }
 }
