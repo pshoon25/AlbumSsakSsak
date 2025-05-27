@@ -1,7 +1,7 @@
 import Foundation
 import Photos
 
-struct Photo: Identifiable {
+struct Photo: Identifiable, Equatable {
     let id: String
     let asset: PHAsset
     var isFavorite: Bool
@@ -16,5 +16,10 @@ struct Photo: Identifiable {
         self.isDeleted = isDeleted
         self.albumName = albumName
         self.timestamp = timestamp
+    }
+    
+    // Equatable 구현
+    static func == (lhs: Photo, rhs: Photo) -> Bool {
+        lhs.id == rhs.id
     }
 }

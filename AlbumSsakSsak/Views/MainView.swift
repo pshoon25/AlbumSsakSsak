@@ -16,76 +16,115 @@ struct MainView: View {
     @State private var showEndPicker = false
     @State private var photoToDelete: String?
     @State private var showDeleteAlert = false
-    @State private var selectedMonth: PhotoViewModel.PhotoGroup? // 월 선택 상태 추가
+    @State private var selectedMonth: PhotoViewModel.PhotoGroup?
+    @State private var currentDisplayPhotos: [Photo] = []
 
     var body: some View {
         NavigationView {
             ZStack {
-                VStack(spacing: 0) {
-                    headerView
-                    if viewModel.authorizationStatus != .authorized && viewModel.authorizationStatus != .limited {
-                        Text("사진 라이브러리 접근 권한이 필요합니다.")
-                            .font(.headline)
-                            .foregroundColor(.gray)
-                            .padding()
-                        Button("설정으로 이동") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .clipShape(Capsule())
-                    } else if viewModel.isLoading {
-                        VStack {
-                            SVGWebView()
-                                .frame(width: 300, height: 300) // SVG 크기 명시
-                            Text("로딩 중...")
-                                .font(.headline)
-                                .foregroundColor(.gray)
-                                .padding(.top, 8)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.white) // 흰 배경
-                    } else if viewModel.monthlyPhotos.isEmpty && viewModel.albums.isEmpty {
-                        Text("사진이 없습니다.")
-                            .font(.headline)
-                            .foregroundColor(.gray)
-                    } else {
-                        contentView
-                    }
-                }
-                .onAppear {
-                    print("MainView appeared, monthlyPhotos count: \(viewModel.monthlyPhotos.count), albums count: \(viewModel.albums.count)")
-                    Task {
-                        await viewModel.loadAlbums()
-                        await viewModel.loadPhotos()
-                    }
-                }
-                
+                mainContent
                 if isAlbumOpen {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                isAlbumOpen = false
-                                selectedMonth = nil
-                            }
-                        }
-                    
-                    albumSection
-                        .frame(width: UIScreen.main.bounds.width * 0.9, height: UIScreen.main.bounds.height * 0.6)
-                        .background(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .shadow(radius: 10)
-                        .scaleEffect(isAlbumOpen ? 1 : 0.5)
-                        .opacity(isAlbumOpen ? 1 : 0)
-                        .offset(y: isAlbumOpen ? 0 : 100)
-                        .transition(.scale.combined(with: .opacity))
-                        .zIndex(1)
+                    albumOverlay
                 }
             }
+        }
+        .onChange(of: viewModel.filteredPhotos) { _ in // filteredPhotos 변경 감지, 중복 제거
+            updateDisplayPhotos()
+            print("filteredPhotos changed, count: \(viewModel.filteredPhotos.count)")
+        }
+    }
+
+    // 메인 콘텐츠
+    private var mainContent: some View {
+        VStack(spacing: 0) {
+            headerView
+            if viewModel.authorizationStatus != .authorized && viewModel.authorizationStatus != .limited {
+                permissionDeniedView
+            } else if viewModel.isLoading {
+                loadingView
+            } else if viewModel.monthlyPhotos.isEmpty && viewModel.albums.isEmpty {
+                emptyView
+            } else {
+                contentView
+            }
+        }
+        .onAppear {
+            print("MainView appeared, Photos: \(viewModel.photos.count), Albums: \(viewModel.albums.count)")
+            Task {
+                await viewModel.loadAlbums()
+                await viewModel.loadPhotos()
+                await MainActor.run {
+                    updateDisplayPhotos()
+                }
+            }
+        }
+        .onChange(of: viewModel.stateHash) { _ in
+            updateDisplayPhotos()
+            print("State hash changed, currentDisplayPhotos count: \(currentDisplayPhotos.count)")
+        }
+    }
+
+    // 권한 거부 뷰
+    private var permissionDeniedView: some View {
+        VStack {
+            Text("사진 라이브러리 접근 권한이 필요합니다.")
+                .font(.headline)
+                .foregroundColor(.gray)
+                .padding()
+            Button("설정으로 이동") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            .padding()
+            .background(Color.blue)
+            .foregroundColor(.white)
+            .clipShape(Capsule())
+        }
+    }
+
+    // 로딩 뷰
+    private var loadingView: some View {
+        VStack {
+            SVGWebView()
+                .frame(width: 300, height: 300)
+            Text("로딩 중...")
+                .font(.headline)
+                .foregroundColor(.gray)
+                .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white)
+    }
+
+    // 빈 뷰
+    private var emptyView: some View {
+        Text("사진이 없습니다.")
+            .font(.headline)
+            .foregroundColor(.gray)
+    }
+
+    // 앨범 오버레이
+    private var albumOverlay: some View {
+        Group {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isAlbumOpen = false
+                        selectedMonth = nil
+                    }
+                }
+            albumSection
+                .frame(width: UIScreen.main.bounds.width * 0.9, height: UIScreen.main.bounds.height * 0.6)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .shadow(radius: 10)
+                .scaleEffect(isAlbumOpen ? 1 : 0.5)
+                .opacity(isAlbumOpen ? 1 : 0)
+                .offset(y: isAlbumOpen ? 0 : 100)
+                .transition(.scale.combined(with: .opacity))
+                .zIndex(1)
         }
     }
 
@@ -100,19 +139,21 @@ struct MainView: View {
             if !viewModel.favorites.isEmpty || !viewModel.trash.isEmpty {
                 Button(action: {
                     Task {
-                        await viewModel.saveChanges() // 요구사항 3: 저장 버튼 클릭 시 saveChanges 호출
+                        await viewModel.saveChanges()
                         await MainActor.run {
                             isAlbumOpen = false
+                            updateDisplayPhotos() // 사진 목록 갱신
                         }
                     }
                 }) {
                     Text("저장")
                         .padding(.vertical, 8)
                         .padding(.horizontal, 16)
-                        .background(Color.black)
+                        .background(viewModel.isLoading ? Color.gray : Color.black)
                         .foregroundColor(.white)
                         .clipShape(Capsule())
                 }
+                .disabled(viewModel.isLoading) // 로딩 중 버튼 비활성화
             } else {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.3)) {
@@ -131,6 +172,15 @@ struct MainView: View {
         .padding(.horizontal)
         .padding(.top)
         .background(Color.white)
+        .onChange(of: viewModel.shouldResetNavigation) { newValue in // iOS 14.0 이상 호환
+            if newValue {
+                isAlbumOpen = false // 앨범 오버레이 닫기
+                currentIndex = 0 // 현재 사진 인덱스 초기화
+                updateDisplayPhotos() // 사진 목록 갱신
+                viewModel.shouldResetNavigation = false // 트리거 초기화
+                print("Navigation reset triggered")
+            }
+        }
     }
 
     // 메인 콘텐츠 뷰
@@ -141,6 +191,32 @@ struct MainView: View {
             trashSection
             adSection
         }
+    }
+
+    // displayPhotos 업데이트
+    private func updateDisplayPhotos() {
+        let photosToDetermine: [Photo]
+        if viewModel.isFavoritesMain {
+            photosToDetermine = viewModel.favoritePhotos
+        } else if viewModel.isTrashMain {
+            photosToDetermine = viewModel.trashPhotos
+        } else {
+            let allNonSpecialPhotos = viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }
+            let filteredNonSpecialPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+            photosToDetermine = viewModel.filteredPhotos.isEmpty ? allNonSpecialPhotos : filteredNonSpecialPhotos
+        }
+        currentDisplayPhotos = photosToDetermine
+        if !currentDisplayPhotos.isEmpty {
+            let currentPhotoId = currentDisplayPhotos[safe: currentIndex]?.id
+            if let currentPhotoId, let newIndex = currentDisplayPhotos.firstIndex(where: { $0.id == currentPhotoId }) {
+                currentIndex = newIndex
+            } else {
+                currentIndex = 0
+            }
+        } else {
+            currentIndex = 0
+        }
+        print("updateDisplayPhotos: Count: \(currentDisplayPhotos.count), currentIndex: \(currentIndex), filteredPhotos: \(viewModel.filteredPhotos.count)")
     }
 
     // 앨범 섹션
@@ -168,7 +244,8 @@ struct MainView: View {
                 withAnimation {
                     viewModel.viewMode = .month
                     selectedMonth = nil
-                    viewModel.filteredPhotos = [] // 필터 초기화
+                    viewModel.filteredPhotos = []
+                    updateDisplayPhotos()
                 }
             }) {
                 Text("월 별")
@@ -182,7 +259,8 @@ struct MainView: View {
                 withAnimation {
                     viewModel.viewMode = .folder
                     selectedMonth = nil
-                    viewModel.filteredPhotos = [] // 필터 초기화
+                    viewModel.filteredPhotos = []
+                    updateDisplayPhotos()
                 }
             }) {
                 Text("폴더별")
@@ -196,23 +274,22 @@ struct MainView: View {
         .padding(.vertical, 10)
     }
 
-    // 월별 사진 뷰 (새로 추가)
+    // 월별 사진 뷰
     private var monthPhotosView: some View {
         VStack {
             HStack {
                 Button(action: {
                     withAnimation {
                         selectedMonth = nil
-                        viewModel.filteredPhotos = [] // 필터 초기화
+                        viewModel.filteredPhotos = []
+                        updateDisplayPhotos()
                     }
                 }) {
-                    HStack {
-                        Image("arrowBackIcon")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 30, height: 30)
-                            .foregroundColor(.black)
-                    }
+                    Image("arrowBackIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 30, height: 30)
+                        .foregroundColor(.black)
                 }
                 Spacer()
                 dateFilterView
@@ -222,8 +299,13 @@ struct MainView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 5) {
                     ForEach(viewModel.filteredPhotos) { photo in
                         Button(action: {
-                            viewModel.selectedAlbum = photo.id
-                            currentIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+                            currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+                            if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                currentIndex = index
+                            } else {
+                                currentIndex = 0
+                            }
+                            print("Selected photo: \(photo.id), currentIndex: \(currentIndex)")
                             withAnimation {
                                 isAlbumOpen = false
                             }
@@ -243,14 +325,16 @@ struct MainView: View {
     private var folderPhotosView: some View {
         VStack {
             HStack {
-                Button(action: { viewModel.selectedFolder = nil }) {
-                    HStack {
-                        Image("arrowBackIcon")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 30, height: 30)
-                            .foregroundColor(.black)
-                    }
+                Button(action: {
+                    viewModel.selectedFolder = nil
+                    viewModel.filteredPhotos = []
+                    updateDisplayPhotos()
+                }) {
+                    Image("arrowBackIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 30, height: 30)
+                        .foregroundColor(.black)
                 }
                 Spacer()
                 dateFilterView
@@ -260,8 +344,13 @@ struct MainView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 5) {
                     ForEach(viewModel.filteredPhotos) { photo in
                         Button(action: {
-                            viewModel.selectedAlbum = photo.id
-                            currentIndex = viewModel.photos.firstIndex(where: { $0.id == photo.id }) ?? 0
+                            currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+                            if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                currentIndex = index
+                            } else {
+                                currentIndex = 0
+                            }
+                            print("Selected folder photo: \(photo.id), currentIndex: \(currentIndex)")
                             withAnimation {
                                 isAlbumOpen = false
                             }
@@ -290,19 +379,22 @@ struct MainView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: max(1, Int(UIScreen.main.bounds.width / 120))), spacing: 10) {
                 ForEach(viewModel.albums) { album in
                     Button(action: {
-                        viewModel.selectedFolder = album.id
-                        viewModel.selectedAlbum = album.id // 앨범 선택 시 selectedAlbum 설정
                         Task {
+                            viewModel.selectedFolder = album.id
+                            viewModel.selectedAlbum = album.id
                             await viewModel.loadFolderPhotos(folderId: album.id, page: 1)
                             await MainActor.run {
-                                // 선택한 앨범의 첫 번째 사진으로 currentIndex 설정
-                                if let firstPhoto = viewModel.filteredPhotos.first,
-                                   let index = viewModel.photos.firstIndex(where: { $0.id == firstPhoto.id }) {
+                                updateDisplayPhotos()
+                                if let firstPhoto = currentDisplayPhotos.first,
+                                   let index = currentDisplayPhotos.firstIndex(where: { $0.id == firstPhoto.id }) {
                                     currentIndex = index
                                 } else {
                                     currentIndex = 0
                                 }
-                                isAlbumOpen = false // 앨범 선택 후 팝업 닫기
+                                print("Selected folder: \(album.name), currentIndex: \(currentIndex), filteredPhotos: \(viewModel.filteredPhotos.count)")
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    isAlbumOpen = false // 로드 완료 후 오버레이 닫기
+                                }
                             }
                         }
                     }) {
@@ -340,7 +432,9 @@ struct MainView: View {
                     Button(action: {
                         withAnimation {
                             selectedMonth = group
-                            viewModel.filteredPhotos = group.photos.filter { !$0.isFavorite && !$0.isDeleted } // 즐겨찾기/휴지통 제외
+                            viewModel.filteredPhotos = group.photos.filter { !$0.isFavorite && !$0.isDeleted }
+                            updateDisplayPhotos()
+                            print("Selected month: \(group.year)-\(group.month), filteredPhotos count: \(viewModel.filteredPhotos.count)")
                         }
                     }) {
                         VStack {
@@ -411,7 +505,7 @@ struct MainView: View {
                             Task {
                                 await viewModel.toggleFavorite(photoId: photo.id)
                                 await MainActor.run {
-                                    currentIndex = min(currentIndex, max(0, viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }.count - 1))
+                                    updateDisplayPhotos()
                                 }
                             }
                         }) {
@@ -430,37 +524,27 @@ struct MainView: View {
 
     // 메인 이미지 섹션
     private var mainImageSection: some View {
-        let displayPhotos = {
-            if viewModel.isFavoritesMain {
-                return viewModel.favoritePhotos
-            } else if viewModel.isTrashMain {
-                return viewModel.trashPhotos
-            } else {
-                // filteredPhotos가 비어 있으면 즐겨찾기/휴지통 제외한 사진 표시
-                return viewModel.filteredPhotos.isEmpty
-                    ? viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }
-                    : viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
-            }
-        }()
-        
-        return GeometryReader { geometry in
+        GeometryReader { geometry in
             ZStack {
-                if displayPhotos.isEmpty {
+                if currentDisplayPhotos.isEmpty {
                     Text("표시할 사진이 없습니다.")
                         .foregroundColor(.gray)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     TabView(selection: Binding(
-                        get: { min(currentIndex, max(0, displayPhotos.count - 1)) },
+                        get: { min(currentIndex, max(0, currentDisplayPhotos.count - 1)) },
                         set: { newValue in
-                            currentIndex = max(0, min(newValue, displayPhotos.count - 1))
+                            currentIndex = max(0, min(newValue, currentDisplayPhotos.count - 1))
                             Task {
-                                await viewModel.loadMorePhotosIfNeeded(currentIndex: currentIndex, totalCount: displayPhotos.count)
+                                if !viewModel.isFavoritesMain && !viewModel.isTrashMain {
+                                    await viewModel.loadMorePhotosIfNeeded(currentIndex: currentIndex, totalCount: currentDisplayPhotos.count)
+                                }
                             }
+                            print("TabView selection changed, currentIndex: \(currentIndex)")
                         }
                     )) {
-                        ForEach(displayPhotos.indices, id: \.self) { index in
-                            let photo = displayPhotos[index]
+                        ForEach(currentDisplayPhotos.indices, id: \.self) { index in
+                            let photo = currentDisplayPhotos[index]
                             ZStack {
                                 SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: geometry.size.width - 80, height: geometry.size.height))
                                     .frame(width: geometry.size.width - 80, height: geometry.size.height)
@@ -480,37 +564,44 @@ struct MainView: View {
                                     .onEnded { value in
                                         let verticalTranslation = value.translation.height
                                         let horizontalTranslation = value.translation.width
+                                        print("DragGesture: vertical: \(verticalTranslation), horizontal: \(horizontalTranslation)")
                                         if abs(verticalTranslation) > abs(horizontalTranslation) * 2 && abs(verticalTranslation) > 100 {
-                                            if verticalTranslation < 0 {
+                                            if verticalTranslation < 0 { // 위로 스와이프
+                                                print("Swipe up on photo \(photo.id)")
                                                 if viewModel.isTrashMain {
                                                     Task {
                                                         await viewModel.toggleFavorite(photoId: photo.id)
                                                         await viewModel.restorePhoto(photoId: photo.id)
                                                         await MainActor.run {
-                                                            currentIndex = min(currentIndex, max(0, displayPhotos.count - 1))
+                                                            updateDisplayPhotos()
+                                                            currentIndex = min(currentIndex, max(0, currentDisplayPhotos.count - 1))
                                                         }
                                                     }
                                                 } else {
                                                     Task {
                                                         await viewModel.toggleFavorite(photoId: photo.id)
                                                         await MainActor.run {
-                                                            currentIndex = min(currentIndex, max(0, displayPhotos.count - 1))
+                                                            updateDisplayPhotos()
+                                                            currentIndex = min(currentIndex, max(0, currentDisplayPhotos.count - 1))
                                                         }
                                                     }
                                                 }
-                                            } else if verticalTranslation > 0 {
+                                            } else if verticalTranslation > 0 { // 아래로 스와이프
+                                                print("Swipe down on photo \(photo.id)")
                                                 if viewModel.isTrashMain {
                                                     Task {
                                                         await viewModel.restorePhoto(photoId: photo.id)
                                                         await MainActor.run {
-                                                            currentIndex = min(currentIndex, max(0, displayPhotos.count - 1))
+                                                            updateDisplayPhotos()
+                                                            currentIndex = min(currentIndex, max(0, currentDisplayPhotos.count - 1))
                                                         }
                                                     }
                                                 } else {
                                                     Task {
                                                         await viewModel.deletePhoto(photoId: photo.id)
                                                         await MainActor.run {
-                                                            currentIndex = min(currentIndex, max(0, displayPhotos.count - 1))
+                                                            updateDisplayPhotos()
+                                                            currentIndex = min(currentIndex, max(0, currentDisplayPhotos.count - 1))
                                                         }
                                                     }
                                                 }
@@ -526,8 +617,8 @@ struct MainView: View {
                     .indexViewStyle(.page(backgroundDisplayMode: .never))
                     .animation(.easeInOut, value: currentIndex)
                     .frame(width: geometry.size.width, height: geometry.size.height)
-                    
-                    Text("\(min(currentIndex, max(0, displayPhotos.count - 1)) + 1) / \(displayPhotos.count)")
+
+                    Text("\(min(currentIndex, max(0, currentDisplayPhotos.count - 1)) + 1) / \(currentDisplayPhotos.count)")
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
@@ -556,7 +647,7 @@ struct MainView: View {
                             Task {
                                 await viewModel.restorePhoto(photoId: photo.id)
                                 await MainActor.run {
-                                    currentIndex = min(currentIndex, max(0, viewModel.photos.filter { !$0.isFavorite && !$0.isDeleted }.count - 1))
+                                    updateDisplayPhotos()
                                 }
                             }
                         }) {
@@ -582,10 +673,6 @@ struct MainView: View {
     }
 
     private var adUnitID: String {
-//        #if DEBUG
         return "ca-app-pub-3940256099942544/2934735716"
-//        #else
-//        return "ca-app-pub-5718563229695590/1031774395"
-//        #endif
     }
 }
