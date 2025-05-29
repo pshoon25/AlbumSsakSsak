@@ -496,6 +496,11 @@ struct MainView: View {
                 Text("즐겨찾기")
                     .font(.headline)
                     .foregroundColor(.black)
+                if !viewModel.favoritePhotos.isEmpty {
+                    Text("+\(viewModel.favoritePhotos.count)")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
             }
             .padding(.horizontal)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -638,6 +643,11 @@ struct MainView: View {
                 Text("휴지통")
                     .font(.headline)
                     .foregroundColor(.black)
+                if !viewModel.trashPhotos.isEmpty {
+                    Text("+\(viewModel.trashPhotos.count)")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
             }
             .padding(.horizontal)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -664,7 +674,7 @@ struct MainView: View {
         .padding(.vertical, 5)
         .background(Color.white)
     }
-
+    
     // 광고 섹션
     private var adSection: some View {
         BannerAdView(adUnitID: adUnitID)
