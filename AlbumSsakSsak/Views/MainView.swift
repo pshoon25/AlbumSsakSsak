@@ -554,7 +554,7 @@ struct MainView: View {
                                 SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: geometry.size.width - 80, height: geometry.size.height))
                                     .frame(width: geometry.size.width - 80, height: geometry.size.height)
                                     .clipShape(RoundedRectangle(cornerRadius: 10))
-                                if photo.isFavorite {
+                                if photo.asset.isFavorite { // PHAsset.isFavorite 사용
                                     Image(systemName: "heart.fill")
                                         .foregroundColor(.red)
                                         .frame(width: 24, height: 24)

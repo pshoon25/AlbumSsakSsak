@@ -89,7 +89,7 @@ class PhotoViewModel: ObservableObject {
     }
 
     func updateFilteredPhotos() {
-        favoritePhotos = photos.filter { $0.isFavorite && !$0.isDeleted }
+        favoritePhotos = photos.filter { favorites.contains($0.id) && !$0.isDeleted } // 수정: isFavorite -> favorites.contains
         trashPhotos = photos.filter { $0.isDeleted }
         // filteredPhotos가 비어 있지 않다면 상태 동기화
         filteredPhotos = filteredPhotos.map { photo in
@@ -128,7 +128,7 @@ class PhotoViewModel: ObservableObject {
                     let photo = Photo(
                         id: photoId,
                         asset: asset,
-                        isFavorite: self.favorites.contains(photoId),
+                        isFavorite: self.favorites.contains(photoId), // 수정: PHAsset.isFavorite -> favorites.contains
                         isDeleted: self.trash.contains(photoId),
                         albumName: "All Photos",
                         timestamp: asset.creationDate ?? Date()
@@ -151,8 +151,8 @@ class PhotoViewModel: ObservableObject {
         let fetchOptions = PHFetchOptions()
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         if !loadAll {
-            fetchOptions.fetchLimit = self.pageSize // 페이징 제한
-        } // loadAll: true일 경우 fetchLimit 제거
+            fetchOptions.fetchLimit = self.pageSize
+        }
         if !photoIdSet.isEmpty {
             fetchOptions.predicate = NSPredicate(format: "NOT (localIdentifier IN %@)", Array(photoIdSet))
         }
@@ -164,7 +164,7 @@ class PhotoViewModel: ObservableObject {
                 let photo = Photo(
                     id: photoId,
                     asset: asset,
-                    isFavorite: self.favorites.contains(photoId),
+                    isFavorite: self.favorites.contains(photoId), // 수정: PHAsset.isFavorite -> favorites.contains
                     isDeleted: self.trash.contains(photoId),
                     albumName: "All Photos",
                     timestamp: asset.creationDate ?? Date()
@@ -188,9 +188,9 @@ class PhotoViewModel: ObservableObject {
             let assetFetchOptions = PHFetchOptions()
             assetFetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
             if loadAll {
-                assetFetchOptions.fetchLimit = 0 // 모든 사진 로드
+                assetFetchOptions.fetchLimit = 0
             } else {
-                assetFetchOptions.fetchLimit = self.pageSize // self 명시
+                assetFetchOptions.fetchLimit = self.pageSize
             }
             let allAssets = PHAsset.fetchAssets(in: collection, options: assetFetchOptions)
             allAssets.enumerateObjects { (asset, _, _) in
@@ -199,7 +199,7 @@ class PhotoViewModel: ObservableObject {
                     let photo = Photo(
                         id: photoId,
                         asset: asset,
-                        isFavorite: self.favorites.contains(photoId),
+                        isFavorite: self.favorites.contains(photoId), // 수정: PHAsset.isFavorite -> favorites.contains
                         isDeleted: self.trash.contains(photoId),
                         albumName: "All Photos",
                         timestamp: asset.creationDate ?? Date()
@@ -315,9 +315,8 @@ class PhotoViewModel: ObservableObject {
     }
 
     func toggleFavorite(photoId: String) async {
-        guard let photo = photos.first(where: { $0.id == photoId }),
-              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil).firstObject else {
-            print("Photo or asset not found for photoId: \(photoId)")
+        guard let photo = photos.first(where: { $0.id == photoId }) else {
+            print("Photo not found for photoId: \(photoId)")
             return
         }
         
@@ -326,50 +325,33 @@ class PhotoViewModel: ObservableObject {
             return
         }
         
-        do {
-            if let index = photos.firstIndex(where: { $0.id == photoId }) {
-                photos[index].isFavorite.toggle()
-                let isFavorite = photos[index].isFavorite
-                
-                // 시스템 즐겨찾기 상태 동기화
-                try await PHPhotoLibrary.shared().performChanges {
-                    let request = PHAssetChangeRequest(for: asset)
-                    request.isFavorite = isFavorite
+        if let index = photos.firstIndex(where: { $0.id == photoId }) {
+            photos[index].isFavorite.toggle()
+            let isFavorite = photos[index].isFavorite
+            
+            if isFavorite {
+                if !favorites.contains(photoId) {
+                    favorites.append(photoId)
                 }
-                
-                // Favorites 앨범 동기화
-                if isFavorite {
-                    try await addAssetToAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
-                    if !favorites.contains(photoId) {
-                        favorites.append(photoId)
-                    }
-                    print("Added photo \(photoId) to Favorites")
-                } else {
-                    try await removeAssetFromAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
-                    favorites.removeAll { $0 == photoId }
-                    print("Removed photo \(photoId) from Favorites")
-                }
-                
-                saveFavorites()
-                await MainActor.run {
-                    if let filteredIndex = filteredPhotos.firstIndex(where: { $0.id == photoId }) {
-                        filteredPhotos[filteredIndex].isFavorite = isFavorite
-                    } else if !isFavorite && !photos[index].isDeleted {
-                        filteredPhotos.append(photos[index])
-                    }
-                    self.updateFilteredPhotos()
-                    self.stateHash = UUID()
-                    self.objectWillChange.send() // UI 갱신 보장
-                    print("Toggled favorite for \(photoId), favorites count: \(favorites.count)")
-                }
-                await groupPhotosByMonth()
+                print("Added photo \(photoId) to favorites array")
+            } else {
+                favorites.removeAll { $0 == photoId }
+                print("Removed photo \(photoId) from favorites array")
             }
-        } catch {
-            print("Error toggling favorite for \(photoId): \(error.localizedDescription)")
+            
+            saveFavorites()
             await MainActor.run {
+                if let filteredIndex = filteredPhotos.firstIndex(where: { $0.id == photoId }) {
+                    filteredPhotos[filteredIndex].isFavorite = isFavorite
+                } else if !isFavorite && !photos[index].isDeleted {
+                    filteredPhotos.append(photos[index])
+                }
+                self.updateFilteredPhotos()
                 self.stateHash = UUID()
                 self.objectWillChange.send()
+                print("Toggled favorite for \(photoId), favorites count: \(favorites.count)")
             }
+            await groupPhotosByMonth()
         }
     }
     
@@ -643,7 +625,7 @@ class PhotoViewModel: ObservableObject {
             var photoChangeRequests: [() -> Void] = []
             var assetsToDelete: [PHAsset] = []
             
-            // 즐겨찾기 추가 및 앨범 동기화
+            // 즐겨찾기 동기화 (추가만 수행)
             for photo in photos {
                 guard let asset = assetMap[photo.id] else {
                     print("Asset not found for photoId: \(photo.id)")
@@ -651,12 +633,12 @@ class PhotoViewModel: ObservableObject {
                 }
                 if favorites.contains(photo.id) && !asset.isFavorite {
                     photoChangeRequests.append {
-                        PHAssetChangeRequest(for: asset).isFavorite = true
+                        let request = PHAssetChangeRequest(for: asset)
+                        request.isFavorite = true
                     }
                     try await addAssetToAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
                     print("Added photo \(photo.id) to iOS Favorites and Favorites album")
                 }
-                // 기존 iOS 즐겨찾기는 제거하지 않음
             }
             
             // 휴지통 처리
@@ -688,17 +670,17 @@ class PhotoViewModel: ObservableObject {
                 self.saveTrash()
                 self.updateFilteredPhotos()
                 self.isLoading = false
-                self.selectedFolder = nil // 폴더 선택 뷰로 리셋
-                self.selectedAlbum = nil // 앨범 선택 뷰로 리셋
-                self.shouldResetNavigation = true // 네비게이션 리셋 트리거
+                self.selectedFolder = nil
+                self.selectedAlbum = nil
+                self.shouldResetNavigation = true
                 self.stateHash = UUID()
-                self.objectWillChange.send() // UI 갱신 보장
+                self.objectWillChange.send()
                 print("Photos updated, count: \(self.photos.count), favorites: \(self.favorites.count), favoritePhotos: \(self.favoritePhotos.count)")
             }
             
             // 변경된 사진만 갱신
-            await loadPhotos(append: false, loadAll: true) // 모든 사진 로드
-            await updatePhotos() // photos의 isFavorite 상태 갱신
+            await loadPhotos(append: false, loadAll: true)
+            await updatePhotos()
             print("saveChanges completed")
             
         } catch {
