@@ -643,7 +643,7 @@ class PhotoViewModel: ObservableObject {
             var photoChangeRequests: [() -> Void] = []
             var assetsToDelete: [PHAsset] = []
             
-            // 즐겨찾기 설정/해제 및 앨범 동기화
+            // 즐겨찾기 추가 및 앨범 동기화
             for photo in photos {
                 guard let asset = assetMap[photo.id] else {
                     print("Asset not found for photoId: \(photo.id)")
@@ -654,14 +654,9 @@ class PhotoViewModel: ObservableObject {
                         PHAssetChangeRequest(for: asset).isFavorite = true
                     }
                     try await addAssetToAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
-                    print("Set photo \(photo.id) as iOS Favorite and added to Favorites album")
-                } else if !favorites.contains(photo.id) && asset.isFavorite {
-                    photoChangeRequests.append {
-                        PHAssetChangeRequest(for: asset).isFavorite = false
-                    }
-                    try await removeAssetFromAlbum(asset: asset, albumTitle: favoriteAlbumTitle)
-                    print("Removed photo \(photo.id) from iOS Favorites and Favorites album")
+                    print("Added photo \(photo.id) to iOS Favorites and Favorites album")
                 }
+                // 기존 iOS 즐겨찾기는 제거하지 않음
             }
             
             // 휴지통 처리
@@ -723,7 +718,7 @@ class PhotoViewModel: ObservableObject {
                 self.objectWillChange.send()
                 print("Error handled, favorites: \(self.favorites.count), favoritePhotos: \(self.favoritePhotos.count)")
             }
-            await loadPhotos(append: false, loadAll: true) // 에러 시에도 모든 사진 로드
+            await loadPhotos(append: false, loadAll: true)
             await updatePhotos()
         }
     }
