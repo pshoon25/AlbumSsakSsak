@@ -392,9 +392,9 @@ struct MainView: View {
                                     currentIndex = 0
                                 }
                                 print("Selected folder: \(album.name), currentIndex: \(currentIndex), filteredPhotos: \(viewModel.filteredPhotos.count)")
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    isAlbumOpen = false // 로드 완료 후 오버레이 닫기
-                                }
+                                // 제거: withAnimation(.easeInOut(duration: 0.3)) {
+                                //     isAlbumOpen = false // 로드 완료 후 오버레이 닫기
+                                // }
                             }
                         }
                     }) {
