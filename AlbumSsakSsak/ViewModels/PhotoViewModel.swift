@@ -686,19 +686,15 @@ class PhotoViewModel: ObservableObject {
         } catch {
             print("Error in saveChanges: \(error.localizedDescription)")
             await MainActor.run {
-                // 에러 시에도 즐겨찾기와 휴지통 초기화
-                self.favorites.removeAll()
-                self.trash.removeAll()
-                self.saveFavorites()
-                self.saveTrash()
-                self.updateFilteredPhotos()
                 self.isLoading = false
                 self.selectedFolder = nil
                 self.selectedAlbum = nil
                 self.shouldResetNavigation = true
                 self.stateHash = UUID()
                 self.objectWillChange.send()
-                print("Error handled, favorites: \(self.favorites.count), favoritePhotos: \(self.favoritePhotos.count)")
+                print("Error handled, maintaining favorites: \(self.favorites.count), trash: \(self.trash.count)")
+                // 사용자에게 에러 알림 표시 (옵션)
+                // 예: UIAlertController를 사용하거나 SwiftUI Alert를 트리거
             }
             await loadPhotos(append: false, loadAll: true)
             await updatePhotos()
