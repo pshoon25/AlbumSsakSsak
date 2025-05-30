@@ -296,37 +296,40 @@ struct MainView: View {
             }
             .padding(.horizontal)
             ScrollView {
-                GeometryReader { geometry in
-                    let spacing: CGFloat = 10 // 열 간 간격
-                    let minPhotoSize: CGFloat = 60 // 최소 사진 크기
-                    let maxPhotoSize: CGFloat = 100 // 최대 사진 크기
-                    let columnsCount = max(1, Int((geometry.size.width - 20) / (minPhotoSize + spacing))) // 열 수 계산
-                    let photoSize = min(max((geometry.size.width - 20 - CGFloat(columnsCount - 1) * spacing) / CGFloat(columnsCount), minPhotoSize), maxPhotoSize)
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount), spacing: spacing) {
-                        ForEach(viewModel.filteredPhotos) { photo in
-                            Button(action: {
-                                currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
-                                if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
-                                    currentIndex = index
-                                } else {
-                                    currentIndex = 0
-                                }
-                                print("Selected photo: \(photo.id), currentIndex: \(currentIndex)")
-                                withAnimation {
-                                    isAlbumOpen = false
-                                }
-                            }) {
-                                SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoSize, height: photoSize))
-                                    .frame(width: photoSize, height: photoSize)
-                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 15), count: 4), spacing: 15) {
+                    ForEach(viewModel.filteredPhotos) { photo in
+                        Button(action: {
+                            currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+                            if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                currentIndex = index
+                            } else {
+                                currentIndex = 0
                             }
+                            print("Selected photo: \(photo.id), currentIndex: \(currentIndex)")
+                            withAnimation {
+                                isAlbumOpen = false
+                            }
+                        }) {
+                            SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoSize, height: photoSize))
+                                .frame(width: photoSize, height: photoSize)
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
                         }
                     }
-                    .padding(.horizontal, 10)
                 }
+                .padding(.horizontal, 10)
+                Spacer(minLength: 0) // 스크롤 영역 확보
             }
+            .frame(maxHeight: .infinity) // ScrollView가 전체 높이 활용
         }
+    }
+
+    private var photoSize: CGFloat {
+        let screenWidth = UIScreen.main.bounds.width
+        let spacing: CGFloat = 15
+        let columnsCount = 4
+        let minPhotoSize: CGFloat = 60
+        let maxPhotoSize: CGFloat = 100
+        return min(max((screenWidth - 20 - CGFloat(columnsCount - 1) * spacing) / CGFloat(columnsCount), minPhotoSize), maxPhotoSize)
     }
 
     // 폴더별 사진 뷰
@@ -349,43 +352,37 @@ struct MainView: View {
             }
             .padding(.horizontal)
             ScrollView {
-                GeometryReader { geometry in
-                    let spacing: CGFloat = 10 // 열 간 간격
-                    let minPhotoSize: CGFloat = 60 // 최소 사진 크기
-                    let maxPhotoSize: CGFloat = 100 // 최대 사진 크기
-                    let columnsCount = max(1, Int((geometry.size.width - 20) / (minPhotoSize + spacing))) // 열 수 계산
-                    let photoSize = min(max((geometry.size.width - 20 - CGFloat(columnsCount - 1) * spacing) / CGFloat(columnsCount), minPhotoSize), maxPhotoSize)
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount), spacing: spacing) {
-                        ForEach(viewModel.filteredPhotos) { photo in
-                            Button(action: {
-                                currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
-                                if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
-                                    currentIndex = index
-                                } else {
-                                    currentIndex = 0
-                                }
-                                print("Selected folder photo: \(photo.id), currentIndex: \(currentIndex)")
-                                withAnimation {
-                                    isAlbumOpen = false
-                                }
-                            }) {
-                                SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoSize, height: photoSize))
-                                    .frame(width: photoSize, height: photoSize)
-                                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                                    .onAppear {
-                                        Task {
-                                            if let folderId = viewModel.selectedFolder {
-                                                await viewModel.loadMoreFolderPhotosIfNeeded(folderId: folderId, currentPhoto: photo)
-                                            }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 15), count: 4), spacing: 15) {
+                    ForEach(viewModel.filteredPhotos) { photo in
+                        Button(action: {
+                            currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+                            if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                currentIndex = index
+                            } else {
+                                currentIndex = 0
+                            }
+                            print("Selected folder photo: \(photo.id), currentIndex: \(currentIndex)")
+                            withAnimation {
+                                isAlbumOpen = false
+                            }
+                        }) {
+                            SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoSize, height: photoSize))
+                                .frame(width: photoSize, height: photoSize)
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                                .onAppear {
+                                    Task {
+                                        if let folderId = viewModel.selectedFolder {
+                                            await viewModel.loadMoreFolderPhotosIfNeeded(folderId: folderId, currentPhoto: photo)
                                         }
                                     }
-                            }
+                                }
                         }
                     }
-                    .padding(.horizontal, 10)
                 }
+                .padding(.horizontal, 10)
+                Spacer(minLength: 0) // 스크롤 영역 확보
             }
+            .frame(maxHeight: .infinity) // ScrollView가 전체 높이 활용
         }
     }
 
