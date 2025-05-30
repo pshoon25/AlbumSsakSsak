@@ -116,7 +116,7 @@ struct MainView: View {
                     }
                 }
             albumSection
-                .frame(width: UIScreen.main.bounds.width * 0.9, height: UIScreen.main.bounds.height * 0.6)
+                .frame(width: UIScreen.main.bounds.width * 0.95, height: UIScreen.main.bounds.height * 0.7)
                 .background(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 20))
                 .shadow(radius: 10)
@@ -296,27 +296,35 @@ struct MainView: View {
             }
             .padding(.horizontal)
             ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 5) {
-                    ForEach(viewModel.filteredPhotos) { photo in
-                        Button(action: {
-                            currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
-                            if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
-                                currentIndex = index
-                            } else {
-                                currentIndex = 0
+                GeometryReader { geometry in
+                    let spacing: CGFloat = 10 // 열 간 간격
+                    let minPhotoSize: CGFloat = 60 // 최소 사진 크기
+                    let maxPhotoSize: CGFloat = 100 // 최대 사진 크기
+                    let columnsCount = max(1, Int((geometry.size.width - 20) / (minPhotoSize + spacing))) // 열 수 계산
+                    let photoSize = min(max((geometry.size.width - 20 - CGFloat(columnsCount - 1) * spacing) / CGFloat(columnsCount), minPhotoSize), maxPhotoSize)
+                    
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount), spacing: spacing) {
+                        ForEach(viewModel.filteredPhotos) { photo in
+                            Button(action: {
+                                currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+                                if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                    currentIndex = index
+                                } else {
+                                    currentIndex = 0
+                                }
+                                print("Selected photo: \(photo.id), currentIndex: \(currentIndex)")
+                                withAnimation {
+                                    isAlbumOpen = false
+                                }
+                            }) {
+                                SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoSize, height: photoSize))
+                                    .frame(width: photoSize, height: photoSize)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
                             }
-                            print("Selected photo: \(photo.id), currentIndex: \(currentIndex)")
-                            withAnimation {
-                                isAlbumOpen = false
-                            }
-                        }) {
-                            SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: 80, height: 80))
-                                .frame(width: 80, height: 80)
-                                .clipShape(RoundedRectangle(cornerRadius: 5))
                         }
                     }
+                    .padding(.horizontal, 10)
                 }
-                .padding(.horizontal)
             }
         }
     }
@@ -341,34 +349,42 @@ struct MainView: View {
             }
             .padding(.horizontal)
             ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 5) {
-                    ForEach(viewModel.filteredPhotos) { photo in
-                        Button(action: {
-                            currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
-                            if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
-                                currentIndex = index
-                            } else {
-                                currentIndex = 0
-                            }
-                            print("Selected folder photo: \(photo.id), currentIndex: \(currentIndex)")
-                            withAnimation {
-                                isAlbumOpen = false
-                            }
-                        }) {
-                            SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: 80, height: 80))
-                                .frame(width: 80, height: 80)
-                                .clipShape(RoundedRectangle(cornerRadius: 5))
-                                .onAppear {
-                                    Task {
-                                        if let folderId = viewModel.selectedFolder {
-                                            await viewModel.loadMoreFolderPhotosIfNeeded(folderId: folderId, currentPhoto: photo)
+                GeometryReader { geometry in
+                    let spacing: CGFloat = 10 // 열 간 간격
+                    let minPhotoSize: CGFloat = 60 // 최소 사진 크기
+                    let maxPhotoSize: CGFloat = 100 // 최대 사진 크기
+                    let columnsCount = max(1, Int((geometry.size.width - 20) / (minPhotoSize + spacing))) // 열 수 계산
+                    let photoSize = min(max((geometry.size.width - 20 - CGFloat(columnsCount - 1) * spacing) / CGFloat(columnsCount), minPhotoSize), maxPhotoSize)
+                    
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount), spacing: spacing) {
+                        ForEach(viewModel.filteredPhotos) { photo in
+                            Button(action: {
+                                currentDisplayPhotos = viewModel.filteredPhotos.filter { !$0.isFavorite && !$0.isDeleted }
+                                if let index = currentDisplayPhotos.firstIndex(where: { $0.id == photo.id }) {
+                                    currentIndex = index
+                                } else {
+                                    currentIndex = 0
+                                }
+                                print("Selected folder photo: \(photo.id), currentIndex: \(currentIndex)")
+                                withAnimation {
+                                    isAlbumOpen = false
+                                }
+                            }) {
+                                SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoSize, height: photoSize))
+                                    .frame(width: photoSize, height: photoSize)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                                    .onAppear {
+                                        Task {
+                                            if let folderId = viewModel.selectedFolder {
+                                                await viewModel.loadMoreFolderPhotosIfNeeded(folderId: folderId, currentPhoto: photo)
+                                            }
                                         }
                                     }
-                                }
+                            }
                         }
                     }
+                    .padding(.horizontal, 10)
                 }
-                .padding(.horizontal)
             }
         }
     }
@@ -551,10 +567,18 @@ struct MainView: View {
                         ForEach(currentDisplayPhotos.indices, id: \.self) { index in
                             let photo = currentDisplayPhotos[index]
                             ZStack {
-                                SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: geometry.size.width - 80, height: geometry.size.height))
-                                    .frame(width: geometry.size.width - 80, height: geometry.size.height)
+                                let aspectRatio = CGFloat(photo.asset.pixelWidth) / max(CGFloat(photo.asset.pixelHeight), 1) // 0 나눗셈 방지
+                                let maxWidth = geometry.size.width - 40 // 여백 줄임
+                                let maxHeight = geometry.size.height - 40 // 하단 텍스트 공간 고려
+                                
+                                // 세로가 긴 이미지를 화면 높이에 맞추기
+                                let photoHeight = aspectRatio < 1 ? maxHeight : maxWidth / aspectRatio
+                                let photoWidth = aspectRatio < 1 ? maxHeight * aspectRatio : maxWidth
+                                
+                                SsakSsakAsyncImage(asset: photo.asset, size: CGSize(width: photoWidth, height: photoHeight))
+                                    .frame(width: photoWidth, height: photoHeight)
                                     .clipShape(RoundedRectangle(cornerRadius: 10))
-                                if photo.asset.isFavorite { // PHAsset.isFavorite 사용
+                                if photo.asset.isFavorite {
                                     Image(systemName: "heart.fill")
                                         .foregroundColor(.red)
                                         .frame(width: 24, height: 24)
@@ -614,14 +638,14 @@ struct MainView: View {
                                         }
                                     }
                             )
-                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
                             .contentShape(Rectangle())
                         }
                     }
                     .tabViewStyle(.page)
                     .indexViewStyle(.page(backgroundDisplayMode: .never))
                     .animation(.easeInOut, value: currentIndex)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
 
                     Text("\(min(currentIndex, max(0, currentDisplayPhotos.count - 1)) + 1) / \(currentDisplayPhotos.count)")
                         .foregroundColor(.white)

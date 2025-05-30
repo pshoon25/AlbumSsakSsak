@@ -13,7 +13,7 @@ struct SsakSsakAsyncImage: View {
             if let image = image {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .scaledToFit() // 비율 유지
             } else {
                 ProgressView()
                     .frame(width: size.width, height: size.height)
@@ -30,7 +30,7 @@ struct SsakSsakAsyncImage: View {
             cacheImage()
         }
         .onDisappear {
-            Self.cachingManager.stopCachingImages(for: [asset], targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: nil)
+            Self.cachingManager.stopCachingImages(for: [asset], targetSize: PHImageManagerMaximumSize, contentMode: .aspectFit, options: nil)
         }
     }
     
@@ -46,7 +46,7 @@ struct SsakSsakAsyncImage: View {
         PHImageManager.default().requestImage(
             for: asset,
             targetSize: targetSize,
-            contentMode: .aspectFill,
+            contentMode: .aspectFit, // 비율 유지
             options: options
         ) { result, info in
             if let result = result, info?[PHImageResultIsDegradedKey] as? Bool == false {
@@ -71,7 +71,7 @@ struct SsakSsakAsyncImage: View {
         Self.cachingManager.startCachingImages(
             for: [asset],
             targetSize: targetSize,
-            contentMode: .aspectFill,
+            contentMode: .aspectFit, // 비율 유지
             options: options
         )
     }
